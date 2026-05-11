@@ -149,9 +149,10 @@ def save_feature_importance(model, path):
     importance.to_csv(path, index=False)
 
 
-def save_model_params(model, path, validation_ndcg):
+def save_model_params(model, path, validation_ndcg, use_position_estimator):
     model_params = {
         "params": PARAMS,
+        "use_position_estimator": use_position_estimator,
         "position_params": POSITION_PARAMS,
         "num_boost_round": NUM_BOOST_ROUND,
         "position_boost_round": POSITION_BOOST_ROUND,
@@ -176,7 +177,7 @@ def add_cached_estimated_position_features(train_df, predict_dfs, position_model
     return result_train, result_predict_dfs
 
 
-def main(train_full=True, retrain_pos_model=False):
+def main(train_full=True, retrain_pos_model=False, use_position_estimator=False):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Loading training data for validation split...", flush=True)
@@ -193,15 +194,16 @@ def main(train_full=True, retrain_pos_model=False):
     del split_history
     gc.collect()
 
-    if retrain_pos_model:
-        print("Adding estimated-position features for validation split...", flush=True)
-        train, (val,), position_model = add_estimated_position_features(train, [val])
-    else:
-        print("Loading cached estimated-position model for validation split...", flush=True)
-        position_model = load_position_estimator(POSITION_MODEL_PATH)
-        train, (val,) = add_cached_estimated_position_features(train, [val], position_model)
-    del position_model
-    gc.collect()
+    if use_position_estimator:
+        if retrain_pos_model:
+            print("Adding estimated-position features for validation split...", flush=True)
+            train, (val,), position_model = add_estimated_position_features(train, [val])
+        else:
+            print("Loading cached estimated-position model for validation split...", flush=True)
+            position_model = load_position_estimator(POSITION_MODEL_PATH)
+            train, (val,) = add_cached_estimated_position_features(train, [val], position_model)
+        del position_model
+        gc.collect()
 
     train["lgbm_label"] = lgbm_labels(train)
     val["lgbm_label"] = lgbm_labels(val)
@@ -218,7 +220,12 @@ def main(train_full=True, retrain_pos_model=False):
 
     if not train_full:
         save_feature_importance(model, OUTPUT_DIR / "feature_importances.csv")
-        save_model_params(model, OUTPUT_DIR / "model_params.json", validation_ndcg)
+        save_model_params(
+            model,
+            OUTPUT_DIR / "model_params.json",
+            validation_ndcg,
+            use_position_estimator,
+        )
         print(f"Validation NDCG@5: {validation_ndcg:.6f}")
         print(f"Wrote validation outputs to {OUTPUT_DIR}")
         return
@@ -232,14 +239,15 @@ def main(train_full=True, retrain_pos_model=False):
     full_history = full_train[PRIOR_HISTORY_COLUMNS].copy()
     print("Building final-training features...", flush=True)
     full_train = add_model_features(full_history, full_train)
-    if retrain_pos_model:
-        print("Adding estimated-position features for final training data...", flush=True)
-        full_train, _, final_position_model = add_estimated_position_features(full_train, [])
-        save_position_estimator(final_position_model, POSITION_MODEL_PATH)
-    else:
-        print("Loading cached estimated-position model for final training data...", flush=True)
-        final_position_model = load_position_estimator(POSITION_MODEL_PATH)
-        full_train, _ = add_cached_estimated_position_features(full_train, [], final_position_model)
+    if use_position_estimator:
+        if retrain_pos_model:
+            print("Adding estimated-position features for final training data...", flush=True)
+            full_train, _, final_position_model = add_estimated_position_features(full_train, [])
+            save_position_estimator(final_position_model, POSITION_MODEL_PATH)
+        else:
+            print("Loading cached estimated-position model for final training data...", flush=True)
+            final_position_model = load_position_estimator(POSITION_MODEL_PATH)
+            full_train, _ = add_cached_estimated_position_features(full_train, [], final_position_model)
     full_train["lgbm_label"] = lgbm_labels(full_train)
     full_train = full_train.drop(
         columns=[
@@ -263,9 +271,10 @@ def main(train_full=True, retrain_pos_model=False):
     test = add_model_features(full_history, test)
     del full_history
     gc.collect()
-    test = add_estimated_position_predictions(test, final_position_model.predict(test))
-    del final_position_model
-    gc.collect()
+    if use_position_estimator:
+        test = add_estimated_position_predictions(test, final_position_model.predict(test))
+        del final_position_model
+        gc.collect()
 
     print("Scoring test data...", flush=True)
     test["score"] = final_model.predict(test)
@@ -274,7 +283,12 @@ def main(train_full=True, retrain_pos_model=False):
     save_predictions(test, OUTPUT_DIR / "test_predictions.csv")
     make_submission(test, output_path="submission.csv")
     save_feature_importance(final_model, OUTPUT_DIR / "feature_importances.csv")
-    save_model_params(final_model, OUTPUT_DIR / "model_params.json", validation_ndcg)
+    save_model_params(
+        final_model,
+        OUTPUT_DIR / "model_params.json",
+        validation_ndcg,
+        use_position_estimator,
+    )
 
     print(f"Validation NDCG@5: {validation_ndcg:.6f}")
     print(f"Wrote outputs to {OUTPUT_DIR}")
