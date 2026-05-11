@@ -24,6 +24,19 @@ COMP_MISSING_INDICATOR_COLUMNS = [
     for suffix in ["rate", "inv", "rate_percent_diff"]
 ]
 
+COMPETITORS = range(1, 9)
+
+QUERY_RELATIVE_COLUMNS = [
+    "price_usd",
+    "price_per_night",
+    "prop_starrating",
+    "prop_review_score",
+    "prop_location_score1",
+    "prop_location_score2",
+    "prop_log_historical_price",
+    "orig_destination_distance",
+]
+
 
 def clean_common(df):
     df = df.copy()
@@ -40,6 +53,40 @@ def clean_train_only(df):
         df = df[~((df["gross_bookings_usd"] == 0) & (df["booking_bool"] == 1))]
     if "gross_booking_usd" in df.columns and "booking_bool" in df.columns:
         df = df[~((df["gross_booking_usd"] == 0) & (df["booking_bool"] == 1))]
+    return df
+
+
+def add_query_relative_features(df):
+    grouped = df.groupby("srch_id")
+    features = {}
+
+    for col in QUERY_RELATIVE_COLUMNS:
+        values = grouped[col]
+        search_mean = values.transform("mean")
+        search_std = values.transform("std")
+
+        features[f"{col}_rank_asc_by_search"] = values.rank(method="average", ascending=True)
+        features[f"{col}_rank_desc_by_search"] = values.rank(method="average", ascending=False)
+        # features[f"{col}_minus_search_mean"] = df[col] - search_mean
+        # features[f"{col}_div_search_mean"] = df[col] / search_mean
+        features[f"{col}_zscore_by_search"] = (df[col] - search_mean) / search_std
+        # features[f"is_min_{col}_in_search"] = (df[col] == values.transform("min")).astype(int)
+        # features[f"is_max_{col}_in_search"] = (df[col] == values.transform("max")).astype(int)
+
+    return pd.concat([df, pd.DataFrame(features)], axis=1)
+
+
+def add_competitor_features(df):
+    comp_prices = pd.DataFrame({
+        f"comp{i}_price": df["price_usd"] * (
+            1 + df[f"comp{i}_rate"] * df[f"comp{i}_rate_percent_diff"].fillna(0) / 100
+        )
+        for i in COMPETITORS
+    })
+    comp_prices = comp_prices.where(df[[f"comp{i}_rate" for i in COMPETITORS]].notna().to_numpy())
+    comp_mean = comp_prices.mean(axis=1)
+    comp_std = comp_prices.std(axis=1).replace(0, np.nan)
+    df["comp_z_score"] = (df["price_usd"] - comp_mean) / comp_std
     return df
 
 
@@ -63,6 +110,8 @@ def add_base_features(df):
     df["price_rank"] = df.groupby("srch_id")["price_usd"].rank(method="average", ascending=True)
     df["price_rank_pct"] = df.groupby("srch_id")["price_usd"].rank(method="average", ascending=True, pct=True)
     df["price_relative_to_search"] = df["price_per_night"] / df.groupby("srch_id")["price_per_night"].transform("mean")
+    df = add_competitor_features(df)
+    df = add_query_relative_features(df)
 
     return df.reset_index(drop=True)
 

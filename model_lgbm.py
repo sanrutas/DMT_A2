@@ -1,4 +1,5 @@
 import json
+import gc
 from pathlib import Path
 
 import lightgbm as lgb
@@ -6,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from config import DATASET_PATHS
-from features import add_features, add_relevance
+from features import PRIOR_HISTORY_COLUMNS, add_features, add_historical_priors, add_relevance
 from split import group_train_val_split
 from T3_data_preparation import clean_train_only, model_feature_columns
 
@@ -19,8 +20,9 @@ PARAMS = {
     "learning_rate": 0.05,
     "num_leaves": 63,
     "min_data_in_leaf": 100,
-    "feature_fraction": 0.8,
-    "bagging_fraction": 0.8,
+    "feature_fraction": 0.6,
+    "bagging_fraction": 0.7,
+    "min_gain_to_split": 0.05,
     "bagging_freq": 1,
     "verbosity": -1,
     "seed": 42,
@@ -30,7 +32,6 @@ OUTPUT_DIR = Path("artifacts/lgbm")
 NUM_BOOST_ROUND = 2000
 EARLY_STOPPING_ROUNDS = 100
 
-
 class LightGBMRanker:
     def __init__(self, booster, feature_cols):
         self.booster = booster
@@ -39,7 +40,7 @@ class LightGBMRanker:
     def predict(self, df):
         return self.booster.predict(
             df[self.feature_cols],
-            num_iteration=self.booster.best_iteration,
+            num_iteration=self.booster.best_iteration or self.booster.current_iteration(),
         )
 
 
@@ -47,33 +48,21 @@ def lgbm_labels(df):
     return np.where(df["booking_bool"] == 1, 2, np.where(df["click_bool"] == 1, 1, 0))
 
 
-def sorted_by_search(df):
-    return df.sort_values("srch_id").reset_index(drop=True)
-
-
-def group_sizes(df):
-    return df.groupby("srch_id", sort=False).size().to_numpy()
-
-
-def lgbm_feature_columns(df):
-    blocked = {"lgbm_label", "score"}
-    return [col for col in model_feature_columns(df) if col not in blocked]
-
-
 def make_dataset(df, feature_cols):
-    df = sorted_by_search(df)
-    labels = lgbm_labels(df)
+    df = df.sort_values("srch_id").reset_index(drop=True)
+    labels = df["lgbm_label"].to_numpy() if "lgbm_label" in df.columns else lgbm_labels(df)
     dataset = lgb.Dataset(
         df[feature_cols],
         label=labels,
-        group=group_sizes(df),
-        free_raw_data=False,
+        group=df.groupby("srch_id", sort=False).size().to_numpy(),
+        free_raw_data=True,
     )
     return df, dataset
 
 
-def train_model(train_df, val_df=None):
-    feature_cols = lgbm_feature_columns(train_df)
+def train_model(train_df, val_df=None, num_boost_round=NUM_BOOST_ROUND):
+    blocked = {"lgbm_label", "score"}
+    feature_cols = [col for col in model_feature_columns(train_df) if col not in blocked]
     _, train_data = make_dataset(train_df, feature_cols)
     valid_sets = [train_data]
     valid_names = ["train"]
@@ -88,12 +77,17 @@ def train_model(train_df, val_df=None):
     booster = lgb.train(
         PARAMS,
         train_data,
-        num_boost_round=NUM_BOOST_ROUND,
+        num_boost_round=num_boost_round,
         valid_sets=valid_sets,
         valid_names=valid_names,
         callbacks=callbacks,
     )
     return LightGBMRanker(booster, feature_cols)
+
+
+def add_model_features(history, df):
+    df = add_features(df)
+    return add_historical_priors(history, df)
 
 
 def dcg(labels, k=5):
@@ -113,12 +107,6 @@ def ndcg_at_5(df):
         scores.append(dcg(predicted, k=5) / ideal_dcg if ideal_dcg > 0 else 0.0)
 
     return float(np.mean(scores))
-
-
-def add_scores(model, df):
-    scored = df.copy()
-    scored["score"] = model.predict(scored)
-    return scored
 
 
 def save_predictions(df, path, label_cols=False):
@@ -152,6 +140,7 @@ def save_model_params(model, path, validation_ndcg):
         "num_boost_round": NUM_BOOST_ROUND,
         "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
         "best_iteration": model.booster.best_iteration,
+        "current_iteration": model.booster.current_iteration(),
         "best_score": model.booster.best_score,
         "validation_ndcg_at_5": validation_ndcg,
         "features": model.feature_cols,
@@ -159,33 +148,83 @@ def save_model_params(model, path, validation_ndcg):
     path.write_text(json.dumps(model_params, indent=2))
 
 
-def main():
+def main(train_full=False):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    print("Loading training data for validation split...", flush=True)
     train = pd.read_csv(DATASET_PATHS["train"])
-    test = pd.read_csv(DATASET_PATHS["test"])
 
-    train = clean_train_only(train)
-    train = add_relevance(train)
+    train = add_relevance(clean_train_only(train))
     train, val = group_train_val_split(train, group_col="srch_id", val_size=0.2, random_state=42)
+    gc.collect()
 
-    train = add_features(train)
-    val = add_features(val)
-    test = add_features(test)
+    print("Building validation-split features...", flush=True)
+    split_history = train[PRIOR_HISTORY_COLUMNS].copy()
+    train = add_model_features(split_history, train)
+    val = add_model_features(split_history, val)
+    del split_history
+    gc.collect()
 
     train["lgbm_label"] = lgbm_labels(train)
     val["lgbm_label"] = lgbm_labels(val)
 
+    print("Training validation model...", flush=True)
     model = train_model(train, val)
 
-    val = add_scores(model, val)
-    test = add_scores(model, test)
+    print("Scoring validation split...", flush=True)
+    val["score"] = model.predict(val)
     validation_ndcg = ndcg_at_5(val)
+    final_rounds = model.booster.best_iteration or NUM_BOOST_ROUND
 
     save_predictions(val, OUTPUT_DIR / "validation_predictions.csv", label_cols=True)
+
+    if not train_full:
+        save_feature_importance(model, OUTPUT_DIR / "feature_importances.csv")
+        save_model_params(model, OUTPUT_DIR / "model_params.json", validation_ndcg)
+        print(f"Validation NDCG@5: {validation_ndcg:.6f}")
+        print(f"Wrote validation outputs to {OUTPUT_DIR}")
+        return
+
+    del train, val, model
+    gc.collect()
+
+    print("Loading training data for final model...", flush=True)
+    full_train = pd.read_csv(DATASET_PATHS["train"])
+    full_train = add_relevance(clean_train_only(full_train))
+    full_history = full_train[PRIOR_HISTORY_COLUMNS].copy()
+    print("Building final-training features...", flush=True)
+    full_train = add_model_features(full_history, full_train)
+    full_train["lgbm_label"] = lgbm_labels(full_train)
+    full_train = full_train.drop(
+        columns=[
+            "position",
+            "click_bool",
+            "booking_bool",
+            "gross_booking_usd",
+            "gross_bookings_usd",
+            "relevance",
+        ],
+        errors="ignore",
+    )
+
+    print(f"Training final model for {final_rounds} rounds...", flush=True)
+    final_model = train_model(full_train, num_boost_round=final_rounds)
+    del full_train
+    gc.collect()
+
+    print("Loading and featurizing test data...", flush=True)
+    test = pd.read_csv(DATASET_PATHS["test"])
+    test = add_model_features(full_history, test)
+    del full_history
+    gc.collect()
+
+    print("Scoring test data...", flush=True)
+    test["score"] = final_model.predict(test)
+
+    print("Writing outputs...", flush=True)
     save_predictions(test, OUTPUT_DIR / "test_predictions.csv")
-    save_feature_importance(model, OUTPUT_DIR / "feature_importances.csv")
-    save_model_params(model, OUTPUT_DIR / "model_params.json", validation_ndcg)
+    save_feature_importance(final_model, OUTPUT_DIR / "feature_importances.csv")
+    save_model_params(final_model, OUTPUT_DIR / "model_params.json", validation_ndcg)
 
     print(f"Validation NDCG@5: {validation_ndcg:.6f}")
     print(f"Wrote outputs to {OUTPUT_DIR}")

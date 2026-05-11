@@ -3,3 +3,10 @@
 __pycache__/
 *pdf
 data/
+
+*.
+!.gitignore
+*.md
+!README.md
+
+artifacts/
