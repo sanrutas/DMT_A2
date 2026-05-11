@@ -6,9 +6,21 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from config import DATASET_PATHS
+from config import (
+    DATASET_PATHS,
+    POSITION_BOOST_ROUND,
+    POSITION_EARLY_STOPPING_ROUNDS,
+    POSITION_FOLDS,
+    POSITION_PARAMS,
+)
 from features import PRIOR_HISTORY_COLUMNS, add_features, add_historical_priors, add_relevance
 from make_submission import make_submission
+from model_position import (
+    add_estimated_position_features,
+    add_estimated_position_predictions,
+    load_position_estimator,
+    save_position_estimator,
+)
 from split import group_train_val_split
 from T3_data_preparation import clean_train_only, model_feature_columns
 
@@ -30,8 +42,10 @@ PARAMS = {
 }
 
 OUTPUT_DIR = Path("artifacts/lgbm")
+POSITION_MODEL_PATH = OUTPUT_DIR / "position_model.txt"
 NUM_BOOST_ROUND = 2000
 EARLY_STOPPING_ROUNDS = 100
+
 
 class LightGBMRanker:
     def __init__(self, booster, feature_cols):
@@ -138,8 +152,12 @@ def save_feature_importance(model, path):
 def save_model_params(model, path, validation_ndcg):
     model_params = {
         "params": PARAMS,
+        "position_params": POSITION_PARAMS,
         "num_boost_round": NUM_BOOST_ROUND,
+        "position_boost_round": POSITION_BOOST_ROUND,
+        "position_folds": POSITION_FOLDS,
         "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
+        "position_early_stopping_rounds": POSITION_EARLY_STOPPING_ROUNDS,
         "best_iteration": model.booster.best_iteration,
         "current_iteration": model.booster.current_iteration(),
         "best_score": model.booster.best_score,
@@ -149,7 +167,16 @@ def save_model_params(model, path, validation_ndcg):
     path.write_text(json.dumps(model_params, indent=2))
 
 
-def main(train_full=False):
+def add_cached_estimated_position_features(train_df, predict_dfs, position_model):
+    result_train = add_estimated_position_predictions(train_df, position_model.predict(train_df))
+    result_predict_dfs = [
+        add_estimated_position_predictions(df, position_model.predict(df))
+        for df in predict_dfs
+    ]
+    return result_train, result_predict_dfs
+
+
+def main(train_full=True, retrain_pos_model=False):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Loading training data for validation split...", flush=True)
@@ -164,6 +191,16 @@ def main(train_full=False):
     train = add_model_features(split_history, train)
     val = add_model_features(split_history, val)
     del split_history
+    gc.collect()
+
+    if retrain_pos_model:
+        print("Adding estimated-position features for validation split...", flush=True)
+        train, (val,), position_model = add_estimated_position_features(train, [val])
+    else:
+        print("Loading cached estimated-position model for validation split...", flush=True)
+        position_model = load_position_estimator(POSITION_MODEL_PATH)
+        train, (val,) = add_cached_estimated_position_features(train, [val], position_model)
+    del position_model
     gc.collect()
 
     train["lgbm_label"] = lgbm_labels(train)
@@ -195,6 +232,14 @@ def main(train_full=False):
     full_history = full_train[PRIOR_HISTORY_COLUMNS].copy()
     print("Building final-training features...", flush=True)
     full_train = add_model_features(full_history, full_train)
+    if retrain_pos_model:
+        print("Adding estimated-position features for final training data...", flush=True)
+        full_train, _, final_position_model = add_estimated_position_features(full_train, [])
+        save_position_estimator(final_position_model, POSITION_MODEL_PATH)
+    else:
+        print("Loading cached estimated-position model for final training data...", flush=True)
+        final_position_model = load_position_estimator(POSITION_MODEL_PATH)
+        full_train, _ = add_cached_estimated_position_features(full_train, [], final_position_model)
     full_train["lgbm_label"] = lgbm_labels(full_train)
     full_train = full_train.drop(
         columns=[
@@ -217,6 +262,9 @@ def main(train_full=False):
     test = pd.read_csv(DATASET_PATHS["test"])
     test = add_model_features(full_history, test)
     del full_history
+    gc.collect()
+    test = add_estimated_position_predictions(test, final_position_model.predict(test))
+    del final_position_model
     gc.collect()
 
     print("Scoring test data...", flush=True)
