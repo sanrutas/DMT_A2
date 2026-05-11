@@ -13,6 +13,10 @@ COUNTRY_IMPUTATION_COLUMNS = [
 
 HISTORICAL_PRIORS = [
     (["prop_id"], "position"),
+    (["prop_id"], "click_bool"),
+    (["prop_id"], "booking_bool"),
+    (["prop_id"], "srch_children_count"),
+    # (["prop_id"], "srch_adults_count")
 ]
 
 PRIOR_HISTORY_COLUMNS = list(dict.fromkeys(
@@ -64,6 +68,41 @@ def add_historical_priors(history, df):
         for target in targets:
             prior_col = f"{prefix}_{target}_mean"
             result[prior_col] = result[prior_col].fillna(global_means[target])
+
+    return result
+
+
+def historical_prior_columns():
+    prior_groups = {}
+
+    for keys, target in HISTORICAL_PRIORS:
+        prior_groups.setdefault(tuple(keys), []).append(target)
+
+    cols = []
+    for key_tuple, targets in prior_groups.items():
+        prefix = "hist_" + "_".join(key_tuple)
+        cols.append(f"{prefix}_count")
+
+        for target in targets:
+            cols.append(f"{prefix}_{target}_mean")
+
+    return cols
+
+
+def add_oof_historical_priors(df, group_col="srch_id", n_folds=5, random_state=42):
+    result = df.copy()
+    base = df.copy()
+    groups = result[group_col].drop_duplicates().to_numpy()
+    rng = np.random.default_rng(random_state)
+    rng.shuffle(groups)
+    group_folds = np.array_split(groups, n_folds)
+    prior_cols = historical_prior_columns()
+
+    for fold_groups in group_folds:
+        fold_mask = result[group_col].isin(fold_groups)
+        history = base.loc[~fold_mask, PRIOR_HISTORY_COLUMNS]
+        fold = add_historical_priors(history, base.loc[fold_mask])
+        result.loc[fold_mask, prior_cols] = fold[prior_cols].to_numpy()
 
     return result
 

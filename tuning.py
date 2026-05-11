@@ -12,7 +12,7 @@ from config import (
     POSITION_EARLY_STOPPING_ROUNDS,
     POSITION_PARAMS,
 )
-from features import PRIOR_HISTORY_COLUMNS, add_features, add_historical_priors
+from features import add_features, add_oof_historical_priors
 from model_position import position_feature_columns, position_labels
 from split import group_train_val_split
 from T3_data_preparation import clean_train_only
@@ -28,11 +28,10 @@ def load_position_data():
     print("Loading training data...", flush=True)
     df = pd.read_csv(DATASET_PATHS["train"])
     df = clean_train_only(df)
-    history = df[PRIOR_HISTORY_COLUMNS].copy()
 
     print("Building position-estimator features...", flush=True)
     df = add_features(df)
-    df = add_historical_priors(history, df)
+    df = add_oof_historical_priors(df)
     return df
 
 

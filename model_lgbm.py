@@ -18,6 +18,7 @@ from features import (
     add_country_imputations,
     add_features,
     add_historical_priors,
+    add_oof_historical_priors,
     add_relevance,
 )
 from make_submission import make_submission
@@ -112,6 +113,12 @@ def add_model_features(history, df):
     return add_historical_priors(history, df)
 
 
+def add_oof_model_features(history, df):
+    df = add_features(df)
+    df = add_country_imputations(history, df)
+    return add_oof_historical_priors(df)
+
+
 def dcg(labels, k=5):
     labels = np.asarray(labels)[:k]
     gains = np.asarray(PARAMS["label_gain"])[labels]
@@ -196,7 +203,7 @@ def main(train_full=True, retrain_pos_model=False, use_position_estimator=False)
 
     print("Building validation-split features...", flush=True)
     split_history = train[PRIOR_HISTORY_COLUMNS].copy()
-    train = add_model_features(split_history, train)
+    train = add_oof_model_features(split_history, train)
     val = add_model_features(split_history, val)
     del split_history
     gc.collect()
@@ -245,7 +252,7 @@ def main(train_full=True, retrain_pos_model=False, use_position_estimator=False)
     full_train = add_relevance(clean_train_only(full_train))
     full_history = full_train[PRIOR_HISTORY_COLUMNS].copy()
     print("Building final-training features...", flush=True)
-    full_train = add_model_features(full_history, full_train)
+    full_train = add_oof_model_features(full_history, full_train)
     if use_position_estimator:
         if retrain_pos_model:
             print("Adding estimated-position features for final training data...", flush=True)
