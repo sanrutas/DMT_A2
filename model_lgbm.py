@@ -8,6 +8,7 @@ import pandas as pd
 
 from config import DATASET_PATHS
 from features import PRIOR_HISTORY_COLUMNS, add_features, add_historical_priors, add_relevance
+from make_submission import make_submission
 from split import group_train_val_split
 from T3_data_preparation import clean_train_only, model_feature_columns
 
@@ -223,6 +224,7 @@ def main(train_full=False):
 
     print("Writing outputs...", flush=True)
     save_predictions(test, OUTPUT_DIR / "test_predictions.csv")
+    make_submission(test, output_path="submission.csv")
     save_feature_importance(final_model, OUTPUT_DIR / "feature_importances.csv")
     save_model_params(final_model, OUTPUT_DIR / "model_params.json", validation_ndcg)
 
