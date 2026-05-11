@@ -29,5 +29,5 @@ ESTIMATED_POSITION_COLUMNS = [
 ]
 POSITION_BLOCKED_COLUMNS = {
     "random_bool",
-    "hist_prop_id_pos_mean",
+    "hist_prop_id_position_mean",
 }

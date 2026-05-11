@@ -13,7 +13,13 @@ from config import (
     POSITION_FOLDS,
     POSITION_PARAMS,
 )
-from features import PRIOR_HISTORY_COLUMNS, add_features, add_historical_priors, add_relevance
+from features import (
+    PRIOR_HISTORY_COLUMNS,
+    add_country_imputations,
+    add_features,
+    add_historical_priors,
+    add_relevance,
+)
 from make_submission import make_submission
 from model_position import (
     add_estimated_position_features,
@@ -102,6 +108,7 @@ def train_model(train_df, val_df=None, num_boost_round=NUM_BOOST_ROUND):
 
 def add_model_features(history, df):
     df = add_features(df)
+    df = add_country_imputations(history, df)
     return add_historical_priors(history, df)
 
 

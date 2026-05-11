@@ -90,6 +90,22 @@ def add_competitor_features(df):
     return df
 
 
+def add_winner_writeup_features(df):
+    grouped = df.groupby("srch_id")
+    mean_price = grouped["price_usd"].transform("mean")
+    mean_starrating = grouped["prop_starrating"].transform("mean")
+    mean_score2 = grouped["prop_location_score2"].transform("mean")
+
+    df["count_window"] = grouped["prop_id"].transform("size")
+    df["ump"] = np.exp(df["prop_log_historical_price"]) - df["price_usd"]
+    df["price_diff"] = df["price_usd"] - mean_price
+    df["starrating_diff"] = df["prop_starrating"] - mean_starrating
+    df["score2ma"] = df["prop_location_score2"] - mean_score2
+    df["per_fee"] = df["price_usd"] / df["guests"].clip(lower=1)
+    df["total_fee"] = df["price_usd"] * df["srch_length_of_stay"] * df["srch_room_count"]
+    return df
+
+
 def add_base_features(df):
     df = clean_common(df)
 
@@ -103,6 +119,7 @@ def add_base_features(df):
     df["stay_value"] = df["price_usd"] * df["srch_room_count"]
     df["guests"] = df["srch_adults_count"] + df["srch_children_count"]
     df["price_per_person"] = df["price_usd"] / df["guests"].clip(lower=1)
+    df = add_winner_writeup_features(df)
 
     for col in MISSING_INDICATOR_COLUMNS + COMP_MISSING_INDICATOR_COLUMNS:
         df[f"{col}_missing"] = df[col].isna().astype(int)
