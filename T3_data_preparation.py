@@ -35,6 +35,17 @@ QUERY_RELATIVE_COLUMNS = [
     "prop_location_score2",
     "prop_log_historical_price",
     "orig_destination_distance",
+    "srch_query_affinity_score",
+    "score2ma",
+    "log_price",
+    "comp_z_score",
+    "ump",
+    "starrating_diff",
+    # "price_diff",
+    # "total_fee",
+    # "per_fee",
+    # "price_per_person",
+    # "stay_value"
 ]
 
 
@@ -77,13 +88,26 @@ def add_query_relative_features(df):
 
 
 def add_competitor_features(df):
-    comp_prices = pd.DataFrame({
-        f"comp{i}_price": df["price_usd"] * (
-            1 + df[f"comp{i}_rate"] * df[f"comp{i}_rate_percent_diff"].fillna(0) / 100
-        )
-        for i in COMPETITORS
-    })
-    comp_prices = comp_prices.where(df[[f"comp{i}_rate" for i in COMPETITORS]].notna().to_numpy())
+    comp_rates = df[[f"comp{i}_rate" for i in COMPETITORS]].astype(float)
+    comp_rate_diffs = df[[f"comp{i}_rate_percent_diff" for i in COMPETITORS]].astype(float)
+    comp_rate_diffs.columns = comp_rates.columns
+
+    comp_data_count = comp_rates.notna().sum(axis=1)
+    df["comp_data_count"] = comp_data_count
+    # df["comp_price_win_share"] = comp_rates.eq(1).sum(axis=1) / comp_data_count
+    # df["comp_price_loss_share"] = comp_rates.eq(-1).sum(axis=1) / comp_data_count
+    # comp_price_advantages = comp_rates * comp_rate_diffs
+    # df["comp_price_advantage_mean"] = comp_price_advantages.mean(axis=1)
+
+    comp_prices = (
+        comp_rates
+        .mul(comp_rate_diffs.fillna(0))
+        .div(100)
+        .add(1)
+        .mul(df["price_usd"], axis=0)
+    )
+    comp_prices.columns = [f"comp{i}_price" for i in COMPETITORS]
+    comp_prices = comp_prices.where(comp_rates.notna().to_numpy())
     comp_mean = comp_prices.mean(axis=1)
     comp_std = comp_prices.std(axis=1).replace(0, np.nan)
     df["comp_z_score"] = (df["price_usd"] - comp_mean) / comp_std

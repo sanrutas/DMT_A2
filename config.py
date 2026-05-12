@@ -4,6 +4,10 @@ DATASET_PATHS = {
     'example': 'data/submission_sample.csv',
 }
 
+ABLATION = False
+ABLATION_TOP_K = 50
+ABLATION_FEATURE_IMPORTANCE_PATH = "artifacts/lgbm/feature_importances.csv"
+
 POSITION_PARAMS = {
     "objective": "regression",
     "metric": "rmse",
@@ -29,5 +33,5 @@ ESTIMATED_POSITION_COLUMNS = [
 ]
 POSITION_BLOCKED_COLUMNS = {
     "random_bool",
-    "hist_prop_id_position_mean",
+    "hist_prop_id_non_random_position_mean",
 }

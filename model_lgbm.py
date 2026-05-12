@@ -6,7 +6,11 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
+from ablation import ablated_feature_columns
 from config import (
+    ABLATION,
+    ABLATION_FEATURE_IMPORTANCE_PATH,
+    ABLATION_TOP_K,
     DATASET_PATHS,
     POSITION_BOOST_ROUND,
     POSITION_EARLY_STOPPING_ROUNDS,
@@ -85,6 +89,12 @@ def make_dataset(df, feature_cols):
 def train_model(train_df, val_df=None, num_boost_round=NUM_BOOST_ROUND):
     blocked = {"lgbm_label", "score"}
     feature_cols = [col for col in model_feature_columns(train_df) if col not in blocked]
+    feature_cols = ablated_feature_columns(
+        feature_cols,
+        ABLATION,
+        ABLATION_TOP_K,
+        ABLATION_FEATURE_IMPORTANCE_PATH,
+    )
     _, train_data = make_dataset(train_df, feature_cols)
     valid_sets = [train_data]
     valid_names = ["train"]
@@ -166,6 +176,9 @@ def save_feature_importance(model, path):
 def save_model_params(model, path, validation_ndcg, use_position_estimator):
     model_params = {
         "params": PARAMS,
+        "ablation": ABLATION,
+        "ablation_top_k": ABLATION_TOP_K,
+        "ablation_feature_importance_path": ABLATION_FEATURE_IMPORTANCE_PATH,
         "use_position_estimator": use_position_estimator,
         "position_params": POSITION_PARAMS,
         "num_boost_round": NUM_BOOST_ROUND,

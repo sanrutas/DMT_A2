@@ -12,16 +12,18 @@ COUNTRY_IMPUTATION_COLUMNS = [
 ]
 
 HISTORICAL_PRIORS = [
-    (["prop_id"], "position"),
-    (["prop_id"], "click_bool"),
-    (["prop_id"], "booking_bool"),
-    (["prop_id"], "srch_children_count"),
-    # (["prop_id"], "srch_adults_count")
+    (["prop_id"], "position", "non-random"),
+    (["prop_id"], "click_bool", "non-random"),
+    (["prop_id"], "booking_bool", "non-random"),
+    (["prop_id"], "click_bool", "random"),
+    # (["prop_id"], "booking_bool", "random"),
+    # (["prop_id"], "srch_children_count", "non-random"),
+    # (["prop_id"], "srch_adults_count", "non-random")
 ]
 
 PRIOR_HISTORY_COLUMNS = list(dict.fromkeys(
-    [col for keys, target in HISTORICAL_PRIORS for col in keys + [target]]
-    + ["prop_country_id"]
+    [col for keys, target, search_type in HISTORICAL_PRIORS for col in keys + [target]]
+    + ["prop_country_id", "random_bool"]
     + COUNTRY_IMPUTATION_COLUMNS
 ))
 
@@ -38,18 +40,21 @@ def add_relevance(df):
 def add_historical_priors(history, df):
     result = df
     prior_groups = {}
-    global_means = {target: history[target].mean() for _, target in HISTORICAL_PRIORS}
     alpha = 50
 
-    for keys, target in HISTORICAL_PRIORS:
-        prior_groups.setdefault(tuple(keys), []).append(target)
+    for keys, target, search_type in HISTORICAL_PRIORS:
+        prior_groups.setdefault((tuple(keys), search_type), []).append(target)
 
-    for key_tuple, targets in prior_groups.items():
+    for (key_tuple, search_type), targets in prior_groups.items():
         keys = list(key_tuple)
-        prefix = "hist_" + "_".join(keys)
+        search_value = {"non-random": 0, "random": 1}[search_type]
+        search_history = history[history["random_bool"] == search_value]
+        global_means = {target: search_history[target].mean() for target in targets}
+        search_suffix = search_type.replace("-", "_")
+        prefix = "hist_" + "_".join(keys) + f"_{search_suffix}"
         count_col = f"{prefix}_count"
 
-        grouped = history.groupby(keys, dropna=False)
+        grouped = search_history.groupby(keys, dropna=False)
         priors = grouped.size().rename(count_col).reset_index()
         target_sums = grouped[targets].sum().reset_index()
         priors = priors.merge(target_sums, on=keys, how="left")
@@ -75,12 +80,13 @@ def add_historical_priors(history, df):
 def historical_prior_columns():
     prior_groups = {}
 
-    for keys, target in HISTORICAL_PRIORS:
-        prior_groups.setdefault(tuple(keys), []).append(target)
+    for keys, target, search_type in HISTORICAL_PRIORS:
+        prior_groups.setdefault((tuple(keys), search_type), []).append(target)
 
     cols = []
-    for key_tuple, targets in prior_groups.items():
-        prefix = "hist_" + "_".join(key_tuple)
+    for (key_tuple, search_type), targets in prior_groups.items():
+        search_suffix = search_type.replace("-", "_")
+        prefix = "hist_" + "_".join(key_tuple) + f"_{search_suffix}"
         cols.append(f"{prefix}_count")
 
         for target in targets:
