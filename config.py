@@ -5,13 +5,15 @@ DATASET_PATHS = {
 }
 
 ABLATION = False
-ABLATION_TOP_K = 50
-ABLATION_FEATURE_IMPORTANCE_PATH = "artifacts/lgbm/feature_importances.csv"
+ABLATION_MAX_FEATURES = 50
+ABLATION_FEATURES_PATH = "artifacts/lgbm/ablated_features.txt"
+ABLATION_FEATURE_IMPORTANCE_PATH = "artifacts/lgbm/validation_feature_importances.csv"
+ABLATION_RESULTS_PATH = "artifacts/lgbm/ablation_results.csv"
 
 POSITION_PARAMS = {
     "objective": "regression",
     "metric": "rmse",
-    "learning_rate": 0.08,
+    "learning_rate": 0.1,
     "num_leaves": 63,
     "min_data_in_leaf": 100,
     "feature_fraction": 0.6,
@@ -21,7 +23,7 @@ POSITION_PARAMS = {
     "verbosity": -1,
     "seed": 42,
 }
-POSITION_BOOST_ROUND = 10000
+POSITION_BOOST_ROUND = 2000
 POSITION_EARLY_STOPPING_ROUNDS = 100
 POSITION_FOLDS = 3
 ESTIMATED_POSITION_COLUMNS = [

@@ -125,5 +125,42 @@ def add_country_imputations(history, df):
     return result
 
 
+def new_features(df):
+    df = df.copy()
+    grouped = df.groupby("srch_id")
+    value_denominator = 1 + df["log_price"]
+
+    df["price_usd_div_search_median"] = df["price_usd"] / grouped["price_usd"].transform("median")
+    df["price_per_night_div_search_median"] = df["price_per_night"] / grouped["price_per_night"].transform("median")
+    df["review_value"] = df["prop_review_score"] / value_denominator
+    df["location2_value"] = df["prop_location_score2_country_imputed"] / value_denominator
+    df["quality_value"] = (df["prop_review_score"] + df["prop_location_score2_country_imputed"]) / value_denominator
+    df["premium_review"] = (df["price_rank_pct"] > 0.75).astype(int) * (df["prop_review_score"] >= 4).astype(int)
+    df["premium_location2"] = (df["price_rank_pct"] > 0.75).astype(int) * (df["prop_location_score2_country_imputed"] >= grouped["prop_location_score2_country_imputed"].transform("median")).astype(int)
+    df["promotion_x_price_rank_pct"] = df["promotion_flag"] * df["price_rank_pct"]
+    df["promotion_x_review"] = df["promotion_flag"] * df["prop_review_score"]
+    df["promotion_x_location2"] = df["promotion_flag"] * df["prop_location_score2_country_imputed"]
+
+
+    df["hist_prop_id_non_random_count_log1p"] = np.log1p(df["hist_prop_id_non_random_count"])
+    
+    df["hist_booking_mean_x_log_count"] = df["hist_prop_id_non_random_booking_bool_mean"] * df["hist_prop_id_non_random_count_log1p"]
+    df["hist_click_mean_x_log_count"] = df["hist_prop_id_non_random_click_bool_mean"] * df["hist_prop_id_non_random_count_log1p"]
+    df["hist_booking_mean_rank_desc_by_search"] = grouped["hist_prop_id_non_random_booking_bool_mean"].rank(method="average", ascending=False)
+    df["hist_count_rank_pct_by_search"] = grouped["hist_prop_id_non_random_count"].rank(method="average", ascending=True, pct=True)
+    # df["hist_booking_mean_minus_search_mean"] = df["hist_prop_id_non_random_booking_bool_mean"] - grouped["hist_prop_id_non_random_booking_bool_mean"].transform("mean")
+
+
+    # df["hist_prop_id_non_random_count_sqrt"] = np.sqrt(df["hist_prop_id_non_random_count"])
+    # df["hist_prop_id_non_random_count_cap_25"] = df["hist_prop_id_non_random_count"].clip(upper=25)
+    # df["hist_prop_id_non_random_count_cap_100"] = df["hist_prop_id_non_random_count"].clip(upper=100)
+    # df["missing_location2_x_price_rank_pct"] = df["prop_location_score2_missing"] * df["price_rank_pct"]
+    # df["missing_location2_x_review"] = df["prop_location_score2_missing"] * df["prop_review_score"]
+    # df["low_history_high_review"] = (df["hist_prop_id_non_random_count"] < 25).astype(int) * (df["prop_review_score"] >= 4).astype(int)
+    # df["low_history_high_location2"] = (df["hist_prop_id_non_random_count"] < 25).astype(int) * (df["prop_location_score2_country_imputed"] >= grouped["prop_location_score2_country_imputed"].transform("median")).astype(int)
+
+    return df
+
+
 def add_features(df):
     return add_base_features(df)

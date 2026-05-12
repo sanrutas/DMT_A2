@@ -6,17 +6,17 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from ablation import ablated_feature_columns
 from config import (
     ABLATION,
     ABLATION_FEATURE_IMPORTANCE_PATH,
-    ABLATION_TOP_K,
+    ABLATION_FEATURES_PATH,
     DATASET_PATHS,
     POSITION_BOOST_ROUND,
     POSITION_EARLY_STOPPING_ROUNDS,
     POSITION_FOLDS,
     POSITION_PARAMS,
 )
+from error_analysis import save_validation_error_analysis
 from features import (
     PRIOR_HISTORY_COLUMNS,
     add_country_imputations,
@@ -24,6 +24,7 @@ from features import (
     add_historical_priors,
     add_oof_historical_priors,
     add_relevance,
+    new_features,
 )
 from make_submission import make_submission
 from model_position import (
@@ -55,7 +56,7 @@ PARAMS = {
 OUTPUT_DIR = Path("artifacts/lgbm")
 POSITION_MODEL_PATH = OUTPUT_DIR / "position_model.txt"
 NUM_BOOST_ROUND = 2000
-EARLY_STOPPING_ROUNDS = 100
+EARLY_STOPPING_ROUNDS = 200
 
 
 class LightGBMRanker:
@@ -86,15 +87,20 @@ def make_dataset(df, feature_cols):
     return df, dataset
 
 
-def train_model(train_df, val_df=None, num_boost_round=NUM_BOOST_ROUND):
+def load_ablated_features(path=ABLATION_FEATURES_PATH):
+    path = Path(path)
+    if not path.exists():
+        return []
+    return [feature.strip() for feature in path.read_text().splitlines() if feature.strip()]
+
+
+def train_model(train_df, val_df=None, num_boost_round=NUM_BOOST_ROUND, excluded_features=None):
     blocked = {"lgbm_label", "score"}
+    if excluded_features is None:
+        excluded_features = load_ablated_features() if ABLATION else []
+    excluded_features = set(excluded_features)
     feature_cols = [col for col in model_feature_columns(train_df) if col not in blocked]
-    feature_cols = ablated_feature_columns(
-        feature_cols,
-        ABLATION,
-        ABLATION_TOP_K,
-        ABLATION_FEATURE_IMPORTANCE_PATH,
-    )
+    feature_cols = [col for col in feature_cols if col not in excluded_features]
     _, train_data = make_dataset(train_df, feature_cols)
     valid_sets = [train_data]
     valid_names = ["train"]
@@ -120,13 +126,15 @@ def train_model(train_df, val_df=None, num_boost_round=NUM_BOOST_ROUND):
 def add_model_features(history, df):
     df = add_features(df)
     df = add_country_imputations(history, df)
-    return add_historical_priors(history, df)
+    df = add_historical_priors(history, df)
+    return new_features(df)
 
 
 def add_oof_model_features(history, df):
     df = add_features(df)
     df = add_country_imputations(history, df)
-    return add_oof_historical_priors(df)
+    df = add_oof_historical_priors(df)
+    return new_features(df)
 
 
 def dcg(labels, k=5):
@@ -177,7 +185,8 @@ def save_model_params(model, path, validation_ndcg, use_position_estimator):
     model_params = {
         "params": PARAMS,
         "ablation": ABLATION,
-        "ablation_top_k": ABLATION_TOP_K,
+        "ablation_features_path": ABLATION_FEATURES_PATH,
+        "ablated_features": load_ablated_features() if ABLATION else [],
         "ablation_feature_importance_path": ABLATION_FEATURE_IMPORTANCE_PATH,
         "use_position_estimator": use_position_estimator,
         "position_params": POSITION_PARAMS,
@@ -244,6 +253,8 @@ def main(train_full=True, retrain_pos_model=False, use_position_estimator=False)
     final_rounds = model.booster.best_iteration or NUM_BOOST_ROUND
 
     save_predictions(val, OUTPUT_DIR / "validation_predictions.csv", label_cols=True)
+    save_validation_error_analysis(val, OUTPUT_DIR)
+    save_feature_importance(model, OUTPUT_DIR / "validation_feature_importances.csv")
 
     if not train_full:
         save_feature_importance(model, OUTPUT_DIR / "feature_importances.csv")

@@ -6,11 +6,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from ablation import ablated_feature_columns
 from config import (
-    ABLATION,
-    ABLATION_FEATURE_IMPORTANCE_PATH,
-    ABLATION_TOP_K,
     ESTIMATED_POSITION_COLUMNS,
     POSITION_BLOCKED_COLUMNS,
     POSITION_BOOST_ROUND,
@@ -55,13 +51,7 @@ def position_labels(df):
 
 def position_feature_columns(df):
     blocked = {"lgbm_label", "score"} | set(ESTIMATED_POSITION_COLUMNS) | POSITION_BLOCKED_COLUMNS
-    feature_cols = [col for col in model_feature_columns(df) if col not in blocked]
-    return ablated_feature_columns(
-        feature_cols,
-        ABLATION,
-        ABLATION_TOP_K,
-        ABLATION_FEATURE_IMPORTANCE_PATH,
-    )
+    return [col for col in model_feature_columns(df) if col not in blocked]
 
 
 def train_position_estimator(train_df, num_boost_round=POSITION_BOOST_ROUND, params=None):
