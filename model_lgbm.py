@@ -29,12 +29,13 @@ from features import (
 )
 from make_submission import make_submission
 from model_position import (
+    VALIDATION_MODEL_PATH as VALIDATION_POSITION_MODEL_PATH,
     add_estimated_position_features,
     add_estimated_position_predictions,
     load_position_estimator,
     save_position_estimator,
 )
-from split import group_train_val_split
+from split import group_train_val_audit_split
 from T3_data_preparation import clean_train_only, model_feature_columns
 
 
@@ -182,7 +183,7 @@ def save_feature_importance(model, path):
     importance.to_csv(path, index=False)
 
 
-def save_model_params(model, path, validation_ndcg, use_position_estimator):
+def save_model_params(model, path, validation_ndcg, audit_ndcg, use_position_estimator):
     model_params = {
         "params": PARAMS,
         "ablation": ABLATION,
@@ -200,6 +201,7 @@ def save_model_params(model, path, validation_ndcg, use_position_estimator):
         "current_iteration": model.booster.current_iteration(),
         "best_score": model.booster.best_score,
         "validation_ndcg_at_5": validation_ndcg,
+        "audit_ndcg_at_5": audit_ndcg,
         "features": model.feature_cols,
     }
     path.write_text(json.dumps(model_params, indent=2))
@@ -219,29 +221,41 @@ def train_validation_model(retrain_pos_model=False, use_position_estimator=True)
     train = pd.read_csv(DATASET_PATHS["train"])
 
     train = add_relevance(clean_train_only(train))
-    train, val = group_train_val_split(train, group_col="srch_id", val_size=0.2, random_state=42)
+    train, val, audit = group_train_val_audit_split(
+        train,
+        group_col="srch_id",
+        val_size=0.2,
+        audit_size=0.1,
+        random_state=42,
+    )
     gc.collect()
 
     print("Building validation-split features...", flush=True)
     split_history = train[PRIOR_HISTORY_COLUMNS].copy()
     train = add_oof_model_features(split_history, train)
     val = add_model_features(split_history, val)
+    audit = add_model_features(split_history, audit)
     del split_history
     gc.collect()
 
     if use_position_estimator:
         if retrain_pos_model:
             print("Adding estimated-position features for validation split...", flush=True)
-            train, (val,), position_model = add_estimated_position_features(train, [val])
+            train, (val, audit), position_model = add_estimated_position_features(train, [val, audit])
         else:
-            print("Loading cached estimated-position model for validation split...", flush=True)
-            position_model = load_position_estimator(POSITION_MODEL_PATH)
-            train, (val,) = add_cached_estimated_position_features(train, [val], position_model)
+            print("Loading validation estimated-position model...", flush=True)
+            position_model = load_position_estimator(VALIDATION_POSITION_MODEL_PATH)
+            train, (val, audit) = add_cached_estimated_position_features(
+                train,
+                [val, audit],
+                position_model,
+            )
         del position_model
         gc.collect()
 
     train["lgbm_label"] = lgbm_labels(train)
     val["lgbm_label"] = lgbm_labels(val)
+    audit["lgbm_label"] = lgbm_labels(audit)
 
     print("Training validation model...", flush=True)
     model = train_model(train, val)
@@ -249,17 +263,21 @@ def train_validation_model(retrain_pos_model=False, use_position_estimator=True)
     print("Scoring validation split...", flush=True)
     val["score"] = model.predict(val)
     validation_ndcg = ndcg_at_5(val)
+    audit["score"] = model.predict(audit)
+    audit_ndcg = ndcg_at_5(audit)
     final_rounds = model.booster.best_iteration or NUM_BOOST_ROUND
 
     save_predictions(val, OUTPUT_DIR / "validation_predictions.csv", label_cols=True)
+    save_predictions(audit, OUTPUT_DIR / "audit_predictions.csv", label_cols=True)
     save_validation_error_analysis(val, OUTPUT_DIR)
     save_feature_importance(model, OUTPUT_DIR / "validation_feature_importances.csv")
-    return model, validation_ndcg, final_rounds
+    return model, validation_ndcg, audit_ndcg, final_rounds
 
 
 def train_test_model(
     final_rounds=NUM_BOOST_ROUND,
     validation_ndcg=None,
+    audit_ndcg=None,
     retrain_pos_model=False,
     use_position_estimator=True,
 ):
@@ -317,11 +335,14 @@ def train_test_model(
         final_model,
         OUTPUT_DIR / "model_params.json",
         validation_ndcg,
+        audit_ndcg,
         use_position_estimator,
     )
 
     if validation_ndcg is not None:
         print(f"Validation NDCG@5: {validation_ndcg:.6f}")
+    if audit_ndcg is not None:
+        print(f"Audit NDCG@5: {audit_ndcg:.6f}")
     print(f"Wrote outputs to {OUTPUT_DIR}")
 
 
@@ -329,10 +350,11 @@ def main(run="both", retrain_pos_model=False, use_position_estimator=True):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     validation_ndcg = None
+    audit_ndcg = None
     final_rounds = NUM_BOOST_ROUND
 
     if run in ["valid", "both"]:
-        model, validation_ndcg, final_rounds = train_validation_model(
+        model, validation_ndcg, audit_ndcg, final_rounds = train_validation_model(
             retrain_pos_model,
             use_position_estimator,
         )
@@ -342,9 +364,11 @@ def main(run="both", retrain_pos_model=False, use_position_estimator=True):
                 model,
                 OUTPUT_DIR / "model_params.json",
                 validation_ndcg,
+                audit_ndcg,
                 use_position_estimator,
             )
         print(f"Validation NDCG@5: {validation_ndcg:.6f}")
+        print(f"Audit NDCG@5: {audit_ndcg:.6f}")
         print(f"Wrote validation outputs to {OUTPUT_DIR}")
         del model
         gc.collect()
@@ -353,6 +377,7 @@ def main(run="both", retrain_pos_model=False, use_position_estimator=True):
         train_test_model(
             final_rounds,
             validation_ndcg,
+            audit_ndcg,
             retrain_pos_model,
             use_position_estimator,
         )
