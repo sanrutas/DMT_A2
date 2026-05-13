@@ -1,5 +1,6 @@
-import json
+import argparse
 import gc
+import json
 from pathlib import Path
 
 import lightgbm as lgb
@@ -213,9 +214,7 @@ def add_cached_estimated_position_features(train_df, predict_dfs, position_model
     return result_train, result_predict_dfs
 
 
-def main(train_full=True, retrain_pos_model=False, use_position_estimator=False):
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
+def train_validation_model(retrain_pos_model=False, use_position_estimator=True):
     print("Loading training data for validation split...", flush=True)
     train = pd.read_csv(DATASET_PATHS["train"])
 
@@ -255,22 +254,15 @@ def main(train_full=True, retrain_pos_model=False, use_position_estimator=False)
     save_predictions(val, OUTPUT_DIR / "validation_predictions.csv", label_cols=True)
     save_validation_error_analysis(val, OUTPUT_DIR)
     save_feature_importance(model, OUTPUT_DIR / "validation_feature_importances.csv")
+    return model, validation_ndcg, final_rounds
 
-    if not train_full:
-        save_feature_importance(model, OUTPUT_DIR / "feature_importances.csv")
-        save_model_params(
-            model,
-            OUTPUT_DIR / "model_params.json",
-            validation_ndcg,
-            use_position_estimator,
-        )
-        print(f"Validation NDCG@5: {validation_ndcg:.6f}")
-        print(f"Wrote validation outputs to {OUTPUT_DIR}")
-        return
 
-    del train, val, model
-    gc.collect()
-
+def train_test_model(
+    final_rounds=NUM_BOOST_ROUND,
+    validation_ndcg=None,
+    retrain_pos_model=False,
+    use_position_estimator=True,
+):
     print("Loading training data for final model...", flush=True)
     full_train = pd.read_csv(DATASET_PATHS["train"])
     full_train = add_relevance(clean_train_only(full_train))
@@ -328,9 +320,56 @@ def main(train_full=True, retrain_pos_model=False, use_position_estimator=False)
         use_position_estimator,
     )
 
-    print(f"Validation NDCG@5: {validation_ndcg:.6f}")
+    if validation_ndcg is not None:
+        print(f"Validation NDCG@5: {validation_ndcg:.6f}")
     print(f"Wrote outputs to {OUTPUT_DIR}")
 
 
+def main(run="both", retrain_pos_model=False, use_position_estimator=True):
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    validation_ndcg = None
+    final_rounds = NUM_BOOST_ROUND
+
+    if run in ["valid", "both"]:
+        model, validation_ndcg, final_rounds = train_validation_model(
+            retrain_pos_model,
+            use_position_estimator,
+        )
+        if run == "valid":
+            save_feature_importance(model, OUTPUT_DIR / "feature_importances.csv")
+            save_model_params(
+                model,
+                OUTPUT_DIR / "model_params.json",
+                validation_ndcg,
+                use_position_estimator,
+            )
+        print(f"Validation NDCG@5: {validation_ndcg:.6f}")
+        print(f"Wrote validation outputs to {OUTPUT_DIR}")
+        del model
+        gc.collect()
+
+    if run in ["test", "both"]:
+        train_test_model(
+            final_rounds,
+            validation_ndcg,
+            retrain_pos_model,
+            use_position_estimator,
+        )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run", choices=["valid", "test", "both"], default="both")
+    parser.add_argument("--retrain-position-estimator", action="store_true")
+    parser.add_argument("--no-position-estimator", action="store_true")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(
+        args.run,
+        args.retrain_position_estimator,
+        not args.no_position_estimator,
+    )

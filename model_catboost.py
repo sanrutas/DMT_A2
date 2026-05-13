@@ -1,3 +1,4 @@
+import argparse
 import gc
 import json
 from pathlib import Path
@@ -19,6 +20,12 @@ from features import (
     new_features,
 )
 from make_submission import make_submission
+from model_position import (
+    MODEL_PATH as POSITION_MODEL_PATH,
+    VALIDATION_MODEL_PATH as VALIDATION_POSITION_MODEL_PATH,
+    add_estimated_position_predictions,
+    load_position_estimator,
+)
 from split import group_train_val_split
 from T3_data_preparation import clean_train_only, model_feature_columns
 
@@ -33,13 +40,18 @@ PARAMS = {
     "verbose": 50,
     "allow_writing_files": False,
     "task_type": "GPU",
-    "border_count": 128,
+    "border_count": 254,
 }
 
 OUTPUT_DIR = Path("artifacts/catboost")
 MODEL_PATH = OUTPUT_DIR / "model.cbm"
-NUM_ITERATIONS = 2000
-EARLY_STOPPING_ROUNDS = 200
+NUM_ITERATIONS = 30000
+EARLY_STOPPING_ROUNDS = 2000
+GOLDEN_BORDER_COUNT = 1024
+GOLDEN_FEATURES = [
+    "orig_destination_distance",
+    "srch_booking_window",
+]
 LABEL_GAIN = {
     0: 0,
     1: 1,
@@ -78,6 +90,13 @@ def cat_feature_columns(feature_cols):
     return [col for col in CATEGORICAL_FEATURES if col in feature_cols]
 
 
+def golden_feature_quantization(feature_cols):
+    return [
+        f"{feature_cols.index(feature)}:border_count={GOLDEN_BORDER_COUNT}"
+        for feature in GOLDEN_FEATURES
+    ]
+
+
 def make_pool(df, feature_cols, cat_feature_cols):
     df = df.sort_values("srch_id").reset_index(drop=True)
     labels = (
@@ -102,6 +121,7 @@ def train_model(train_df, val_df=None, iterations=NUM_ITERATIONS):
 
     params = PARAMS.copy()
     params["iterations"] = iterations
+    params["per_float_feature_quantization"] = golden_feature_quantization(feature_cols)
     model = CatBoostRankerModel(**params)
 
     if val_df is None:
@@ -175,9 +195,15 @@ def save_feature_importance(model, path):
     importance.to_csv(path, index=False)
 
 
-def save_model_params(model, path, validation_ndcg):
+def save_model_params(model, path, validation_ndcg, use_position_estimator):
     model_params = {
         "params": PARAMS,
+        "use_position_estimator": use_position_estimator,
+        "position_model_path": str(POSITION_MODEL_PATH),
+        "validation_position_model_path": str(VALIDATION_POSITION_MODEL_PATH),
+        "golden_features": GOLDEN_FEATURES,
+        "golden_border_count": GOLDEN_BORDER_COUNT,
+        "per_float_feature_quantization": golden_feature_quantization(model.feature_cols),
         "num_iterations": NUM_ITERATIONS,
         "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
         "tree_count": model.model.tree_count_,
@@ -200,9 +226,16 @@ def save_model(model):
     )
 
 
-def main(train_full=True):
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def add_cached_estimated_position_features(train_df, predict_dfs, position_model):
+    result_train = add_estimated_position_predictions(train_df, position_model.predict(train_df))
+    result_predict_dfs = [
+        add_estimated_position_predictions(df, position_model.predict(df))
+        for df in predict_dfs
+    ]
+    return result_train, result_predict_dfs
 
+
+def train_validation_model(use_position_estimator=True):
     print("Loading training data for validation split...", flush=True)
     train = pd.read_csv(DATASET_PATHS["train"])
 
@@ -216,6 +249,13 @@ def main(train_full=True):
     val = add_model_features(split_history, val)
     del split_history
     gc.collect()
+
+    if use_position_estimator:
+        print("Loading validation estimated-position model...", flush=True)
+        position_model = load_position_estimator(VALIDATION_POSITION_MODEL_PATH)
+        train, (val,) = add_cached_estimated_position_features(train, [val], position_model)
+        del position_model
+        gc.collect()
 
     train["catboost_label"] = catboost_labels(train)
     val["catboost_label"] = catboost_labels(val)
@@ -231,24 +271,27 @@ def main(train_full=True):
     save_predictions(val, OUTPUT_DIR / "validation_predictions.csv", label_cols=True)
     save_validation_error_analysis(val, OUTPUT_DIR)
     save_feature_importance(model, OUTPUT_DIR / "validation_feature_importances.csv")
+    return model, validation_ndcg, final_iterations
 
-    if not train_full:
-        save_feature_importance(model, OUTPUT_DIR / "feature_importances.csv")
-        save_model(model)
-        save_model_params(model, OUTPUT_DIR / "model_params.json", validation_ndcg)
-        print(f"Validation NDCG@5: {validation_ndcg:.6f}")
-        print(f"Wrote validation outputs to {OUTPUT_DIR}")
-        return
 
-    del train, val, model
-    gc.collect()
-
+def train_test_model(
+    final_iterations=NUM_ITERATIONS,
+    validation_ndcg=None,
+    use_position_estimator=True,
+):
     print("Loading training data for final model...", flush=True)
     full_train = pd.read_csv(DATASET_PATHS["train"])
     full_train = add_relevance(clean_train_only(full_train))
     full_history = full_train[PRIOR_HISTORY_COLUMNS].copy()
     print("Building final-training features...", flush=True)
     full_train = add_oof_model_features(full_history, full_train)
+    if use_position_estimator:
+        print("Loading cached estimated-position model for final training data...", flush=True)
+        final_position_model = load_position_estimator(POSITION_MODEL_PATH)
+        full_train = add_estimated_position_predictions(
+            full_train,
+            final_position_model.predict(full_train),
+        )
     full_train["catboost_label"] = catboost_labels(full_train)
     full_train = full_train.drop(
         columns=[
@@ -272,6 +315,13 @@ def main(train_full=True):
     test = add_model_features(full_history, test)
     del full_history
     gc.collect()
+    if use_position_estimator:
+        test = add_estimated_position_predictions(
+            test,
+            final_position_model.predict(test),
+        )
+        del final_position_model
+        gc.collect()
 
     print("Scoring test data...", flush=True)
     test["score"] = final_model.predict(test)
@@ -281,11 +331,53 @@ def main(train_full=True):
     make_submission(test, output_path="submission.csv")
     save_feature_importance(final_model, OUTPUT_DIR / "feature_importances.csv")
     save_model(final_model)
-    save_model_params(final_model, OUTPUT_DIR / "model_params.json", validation_ndcg)
+    save_model_params(
+        final_model,
+        OUTPUT_DIR / "model_params.json",
+        validation_ndcg,
+        use_position_estimator,
+    )
 
-    print(f"Validation NDCG@5: {validation_ndcg:.6f}")
+    if validation_ndcg is not None:
+        print(f"Validation NDCG@5: {validation_ndcg:.6f}")
     print(f"Wrote outputs to {OUTPUT_DIR}")
 
 
+def main(run="both", use_position_estimator=True):
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    validation_ndcg = None
+    final_iterations = NUM_ITERATIONS
+
+    if run in ["valid", "both"]:
+        model, validation_ndcg, final_iterations = train_validation_model(
+            use_position_estimator,
+        )
+        if run == "valid":
+            save_feature_importance(model, OUTPUT_DIR / "feature_importances.csv")
+            save_model(model)
+            save_model_params(
+                model,
+                OUTPUT_DIR / "model_params.json",
+                validation_ndcg,
+                use_position_estimator,
+            )
+        print(f"Validation NDCG@5: {validation_ndcg:.6f}")
+        print(f"Wrote validation outputs to {OUTPUT_DIR}")
+        del model
+        gc.collect()
+
+    if run in ["test", "both"]:
+        train_test_model(final_iterations, validation_ndcg, use_position_estimator)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run", choices=["valid", "test", "both"], default="both")
+    parser.add_argument("--no-position-estimator", action="store_true")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args.run, not args.no_position_estimator)
