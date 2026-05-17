@@ -1,0 +1,16 @@
+*.ipynb
+.venv/
+__pycache__/
+*pdf
+data/
+artifacts/
+SVD_outputs/
+
+*.
+!.gitignore
+*.md
+!README.md
+
+artifacts/
+
+submission.csv
