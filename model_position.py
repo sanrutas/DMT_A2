@@ -25,7 +25,7 @@ from features import (
     add_relevance,
     new_features,
 )
-from split import group_train_val_audit_split, group_train_val_split
+from split import group_train_val_split
 from T3_data_preparation import clean_train_only, model_feature_columns
 
 
@@ -187,14 +187,7 @@ def save_feature_importance(estimator, path):
     importance.to_csv(path, index=False)
 
 
-def save_model_params(
-    estimator,
-    path,
-    validation_rmse=None,
-    audit_rmse=None,
-    resumed_from=None,
-    resume_rounds=None,
-):
+def save_model_params(estimator, path, validation_rmse=None, resumed_from=None, resume_rounds=None):
     params = {
         "params": POSITION_PARAMS,
         "num_boost_round": POSITION_BOOST_ROUND,
@@ -206,7 +199,6 @@ def save_model_params(
         "current_iteration": estimator.booster.current_iteration(),
         "best_score": estimator.booster.best_score,
         "validation_rmse": validation_rmse,
-        "audit_rmse": audit_rmse,
         "features": estimator.feature_cols,
     }
     path.write_text(json.dumps(params, indent=2))
@@ -230,24 +222,17 @@ def prepare_validation_data():
     print("Loading training data for validation split...", flush=True)
     train = pd.read_csv(DATASET_PATHS["train"])
     train = add_relevance(clean_train_only(train))
-    train, val, audit = group_train_val_audit_split(
-        train,
-        group_col="srch_id",
-        val_size=0.2,
-        audit_size=0.1,
-        random_state=42,
-    )
+    train, val = group_train_val_split(train, group_col="srch_id", val_size=0.2, random_state=42)
     gc.collect()
 
     print("Building validation-split features...", flush=True)
     split_history = train[PRIOR_HISTORY_COLUMNS].copy()
     train = add_oof_model_features(split_history, train)
     val = add_model_features(split_history, val)
-    audit = add_model_features(split_history, audit)
     del split_history
     gc.collect()
 
-    return train, val, audit
+    return train, val
 
 
 def prepare_training_data():
@@ -265,7 +250,7 @@ def prepare_training_data():
 
 
 def train_validation_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
-    train, val, audit = prepare_validation_data()
+    train, val = prepare_validation_data()
 
     init_model_path = VALIDATION_MODEL_PATH if resume else None
     if resume:
@@ -282,27 +267,21 @@ def train_validation_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
     predictions = estimator.predict(val)
     val = add_estimated_position_predictions(val, predictions)
     validation_rmse = rmse(position_labels(val), val["estimated_position_pct"])
-    audit_predictions = estimator.predict(audit)
-    audit = add_estimated_position_predictions(audit, audit_predictions)
-    audit_rmse = rmse(position_labels(audit), audit["estimated_position_pct"])
 
     save_predictions(val, OUTPUT_DIR / "validation_predictions.csv")
-    save_predictions(audit, OUTPUT_DIR / "audit_predictions.csv")
     save_feature_importance(estimator, OUTPUT_DIR / "validation_feature_importances.csv")
     save_position_estimator(estimator, VALIDATION_MODEL_PATH)
     save_model_params(
         estimator,
         OUTPUT_DIR / "validation_model_params.json",
         validation_rmse,
-        audit_rmse,
         resumed_from=init_model_path,
         resume_rounds=resume_rounds if resume else None,
     )
 
     print(f"Validation position RMSE: {validation_rmse:.6f}", flush=True)
-    print(f"Audit position RMSE: {audit_rmse:.6f}", flush=True)
     print(f"Wrote validation outputs to {OUTPUT_DIR}", flush=True)
-    return validation_rmse, audit_rmse
+    return validation_rmse
 
 
 def train_test_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
