@@ -64,6 +64,21 @@ def clean_train_only(df):
         df = df[~((df["gross_bookings_usd"] == 0) & (df["booking_bool"] == 1))]
     if "gross_booking_usd" in df.columns and "booking_bool" in df.columns:
         df = df[~((df["gross_booking_usd"] == 0) & (df["booking_bool"] == 1))]
+
+    # this cleaning removes extreme nonsense prices, removes <10k rows on full df, which is < 0.2%
+    df['1day_price'] = df['price_usd'] / df['srch_length_of_stay']
+    df['log_price'] = np.log1p(df['1day_price'])
+    
+    g = df.groupby('prop_id')['log_price']
+    q1 = g.transform('quantile', 0.25)
+    q3 = g.transform('quantile', 0.75)
+    iqr = q3 - q1
+    upper = q3 + 3 * iqr
+    df = df.loc[(df['log_price'] <= upper) | (iqr == 0) | iqr.isna()]
+    df = df.loc[df['1day_price'] < 1000]
+
+    df = df.drop(columns=["1day_price", "log_price"])
+        
     return df
 
 
