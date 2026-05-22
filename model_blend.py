@@ -63,14 +63,6 @@ def load_validation_predictions():
     return lgbm.merge(catboost, on=["srch_id", "prop_id"], how="inner")
 
 
-def load_audit_predictions():
-    lgbm = load_predictions(LGBM_DIR / "audit_predictions.csv", "lgbm_score")
-    catboost = load_predictions(CATBOOST_DIR / "audit_predictions.csv", "catboost_score")
-    lgbm = lgbm.drop(columns=["lgbm_label"])
-    catboost = catboost[["srch_id", "prop_id", "catboost_score"]]
-    return lgbm.merge(catboost, on=["srch_id", "prop_id"], how="inner")
-
-
 def load_test_predictions():
     lgbm = load_predictions(LGBM_DIR / "test_predictions.csv", "lgbm_score")
     catboost = load_predictions(CATBOOST_DIR / "test_predictions.csv", "catboost_score")
@@ -139,20 +131,17 @@ def save_predictions(df, path, label_cols=False):
     df[cols].to_csv(path, index=False)
 
 
-def save_model_params(best, audit_ndcg, path):
+def save_model_params(best, path):
     params = {
         "blend": {
             "score_inputs": ["catboost_rank_score", "lgbm_rank_score"],
             "catboost_weight": best["catboost_weight"],
             "lgbm_weight": best["lgbm_weight"],
             "validation_ndcg_at_5": best["validation_ndcg_at_5"],
-            "audit_ndcg_at_5": audit_ndcg,
         },
         "inputs": {
             "lgbm_validation_predictions": str(LGBM_DIR / "validation_predictions.csv"),
             "catboost_validation_predictions": str(CATBOOST_DIR / "validation_predictions.csv"),
-            "lgbm_audit_predictions": str(LGBM_DIR / "audit_predictions.csv"),
-            "catboost_audit_predictions": str(CATBOOST_DIR / "audit_predictions.csv"),
             "lgbm_test_predictions": str(LGBM_DIR / "test_predictions.csv"),
             "catboost_test_predictions": str(CATBOOST_DIR / "test_predictions.csv"),
         },
@@ -165,7 +154,7 @@ def load_catboost_weight():
     return params["blend"]["catboost_weight"]
 
 
-def print_results(results, audit_ndcg):
+def print_results(results):
     lgbm_score = results.loc[results["catboost_weight"] == 0, "validation_ndcg_at_5"].iloc[0]
     catboost_score = results.loc[results["catboost_weight"] == 1, "validation_ndcg_at_5"].iloc[0]
     best = results.iloc[0]
@@ -179,7 +168,6 @@ def print_results(results, audit_ndcg):
         f"lgbm_weight={best['lgbm_weight']:.2f})",
         flush=True,
     )
-    print(f"Best blend audit NDCG@5: {audit_ndcg:.6f}", flush=True)
 
 
 def blend_validation_predictions():
@@ -187,16 +175,11 @@ def blend_validation_predictions():
     val = load_validation_predictions()
     results, best_predictions = evaluate_blends(val)
     best = results.iloc[0]
-    audit = load_audit_predictions()
-    audit = add_rank_scores(audit)
-    audit_predictions = add_blend_score(audit, best["catboost_weight"])
-    audit_ndcg = ndcg_at_5(audit_predictions)
 
     results.to_csv(OUTPUT_DIR / "blend_results.csv", index=False)
     save_predictions(best_predictions, OUTPUT_DIR / "best_validation_predictions.csv", label_cols=True)
-    save_predictions(audit_predictions, OUTPUT_DIR / "audit_predictions.csv", label_cols=True)
-    save_model_params(best, audit_ndcg, OUTPUT_DIR / "model_params.json")
-    print_results(results, audit_ndcg)
+    save_model_params(best, OUTPUT_DIR / "model_params.json")
+    print_results(results)
     return best["catboost_weight"]
 
 

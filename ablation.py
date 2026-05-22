@@ -22,7 +22,7 @@ from model_lgbm import (
     save_feature_importance,
     train_model,
 )
-from split import group_train_val_audit_split
+from split import group_train_val_split
 from T3_data_preparation import clean_train_only
 
 
@@ -41,13 +41,7 @@ def prepare_validation_data():
     print("Loading training data for validation split...", flush=True)
     train = pd.read_csv(DATASET_PATHS["train"])
     train = add_relevance(clean_train_only(train))
-    train, val, _ = group_train_val_audit_split(
-        train,
-        group_col="srch_id",
-        val_size=0.2,
-        audit_size=0.1,
-        random_state=42,
-    )
+    train, val = group_train_val_split(train, group_col="srch_id", val_size=0.2, random_state=42)
     gc.collect()
 
     print("Building validation-split features...", flush=True)

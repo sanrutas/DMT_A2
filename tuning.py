@@ -14,7 +14,7 @@ from config import (
 )
 from features import add_features, add_oof_historical_priors
 from model_position import position_feature_columns, position_labels
-from split import group_train_val_audit_split
+from split import group_train_val_split
 from T3_data_preparation import clean_train_only
 
 
@@ -69,11 +69,10 @@ def current_position_trial_params():
 
 def make_position_datasets(df):
     fit_df = df[df["random_bool"] == 0]
-    train_fit, val_fit, _ = group_train_val_audit_split(
+    train_fit, val_fit = group_train_val_split(
         fit_df,
         group_col="srch_id",
         val_size=0.2,
-        audit_size=0.1,
         random_state=42,
     )
     feature_cols = position_feature_columns(fit_df)
