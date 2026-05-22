@@ -149,7 +149,7 @@ def add_estimated_position_predictions(df, predictions):
 
 
 def add_estimated_position_features(train_df, predict_dfs):
-    groups = train_df["srch_id"].drop_duplicates().to_numpy()
+    groups = train_df["srch_id"].drop_duplicates().to_numpy().copy()
     rng = np.random.default_rng(42)
     rng.shuffle(groups)
     group_folds = np.array_split(groups, POSITION_FOLDS)

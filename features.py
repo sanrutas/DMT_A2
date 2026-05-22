@@ -100,6 +100,7 @@ def add_oof_historical_priors(df, group_col="srch_id", n_folds=5, random_state=4
     base = df.copy()
     groups = result[group_col].drop_duplicates().to_numpy()
     rng = np.random.default_rng(random_state)
+    groups = groups.copy()
     rng.shuffle(groups)
     group_folds = np.array_split(groups, n_folds)
     prior_cols = historical_prior_columns()
