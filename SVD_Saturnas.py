@@ -64,6 +64,7 @@ def fit_svd(full_dest_prop_matrix, k):
     dest_emb = U * sigma # shape (n_dests, k)
     prop_emb = Vt.T # shape (n_props, k)
     # dest_emb * prop_emb approximates full matrix 
+    print(f'dest{dest_emb.shape}, prop{prop_emb.shape}')
 
     return dest_emb, prop_emb
 

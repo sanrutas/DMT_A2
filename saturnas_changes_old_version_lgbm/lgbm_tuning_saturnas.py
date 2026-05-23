@@ -20,7 +20,7 @@ from saturnas_changes_old_version_lgbm.model_lgbm_SVD_saturnas import (
     ndcg_at_5,
     train_model
 )
-from saturnas_changes_old_version_lgbm.SVD_Saturnas import fit_svd_features, apply_svd_features
+from SVD_Saturnas import fit_svd_features, apply_svd_features
 
 N_TRIALS = 30
 OUTPUT_DIR = Path("artifacts/lgbm")
