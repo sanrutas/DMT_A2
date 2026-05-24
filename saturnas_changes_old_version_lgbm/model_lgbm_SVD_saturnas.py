@@ -11,7 +11,7 @@ from features import PRIOR_HISTORY_COLUMNS, add_features, add_historical_priors,
 from make_submission import make_submission
 from split import group_train_val_split
 from T3_data_preparation import clean_train_only, model_feature_columns
-from saturnas_changes_old_version_lgbm.SVD_Saturnas import fit_svd_features, apply_svd_features
+from SVD_Saturnas import fit_svd_features, apply_svd_features
 
 TUNED_PARAMS = {
     'learning_rate': 0.012868288646766658,

@@ -28,10 +28,10 @@ def plot_prices_over_time(df, prop_ids, type):
 
     # example how some searches for the same hotels may have abnormal price values. Those should be deleted.
 
-    fig, axes = plt.subplots(3, 4, figsize=(14, 6), constrained_layout=True)
+    fig, axes = plt.subplots(2, 4, figsize=(14, 4), constrained_layout=True)
     axes = axes.flatten()
 
-    fig.suptitle("Price history of some hotels (prop_id), type", fontsize=16)
+    # fig.suptitle("Price history of some hotels (prop_id), type", fontsize=16)
 
     # prop_ids = df["prop_id"].drop_duplicates()[:12]
 
@@ -66,14 +66,53 @@ def plot_price_density_by_categories(df, category_cols):
         plt.savefig(f"plots/daily_price_density_by_{category_col}.png", dpi=300, bbox_inches='tight')
         plt.show()
 
+
+def plot_booking_prob_by_position(df):
+    # How likely is a hotel to be booked if it appears at position k
+    booking_by_position = (
+        df
+        .dropna(subset=["position", "booking_bool", "random_bool"])
+        .groupby(["random_bool", "position"], as_index=False)
+        .agg(booking_probability=("booking_bool", "mean"))
+    )
+
+    normal_ranking = booking_by_position[booking_by_position["random_bool"] == 0]
+    random_ranking = booking_by_position[booking_by_position["random_bool"] == 1]
+
+    plt.figure(figsize=(12, 5))
+
+    plt.plot(
+        normal_ranking["position"],
+        normal_ranking["booking_probability"],
+        marker="o",
+        label="Expedia ranking algorithm"
+    )
+
+    plt.plot(
+        random_ranking["position"],
+        random_ranking["booking_probability"],
+        marker="o",
+        label="Randomized ranking"
+    )
+
+    plt.xlabel("Search result position", fontsize=14)
+    plt.ylabel("Average booking probability", fontsize=14)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig("plots/booking_probability_random_vs_normal.png", dpi=300)
+
+
 if __name__=="__main__":
     print("loading df", flush=True)
     df, = load(["train"])
     df['date_time'] = pd.to_datetime(df['date_time'])
     df['price_per_day'] = df['price_usd'] / df["srch_length_of_stay"]
-    prop_ids = df["prop_id"].drop_duplicates().head(12).tolist()
+    prop_ids = df["prop_id"].drop_duplicates().head(8).tolist()
     
+    plot_booking_prob_by_position(df)
     plot_prices_over_time(df, prop_ids, type="pre-clean")
+
     df = clean_train_only(df)
 
     plot_price_density_by_categories(df, ['srch_saturday_night_bool', 'promotion_flag'])
