@@ -40,17 +40,17 @@ PARAMS = {
     "verbose": 50,
     "allow_writing_files": False,
     "task_type": "GPU",
-    "border_count": 254,
+    # "border_count": 254,
 }
 
 OUTPUT_DIR = Path("artifacts/catboost")
 MODEL_PATH = OUTPUT_DIR / "model.cbm"
-NUM_ITERATIONS = 30000
-EARLY_STOPPING_ROUNDS = 2000
+NUM_ITERATIONS = 5000
+EARLY_STOPPING_ROUNDS = 200
 GOLDEN_BORDER_COUNT = 1024
 GOLDEN_FEATURES = [
-    "orig_destination_distance",
-    "srch_booking_window",
+    # "orig_destination_distance",
+    # "srch_booking_window",
 ]
 LABEL_GAIN = {
     0: 0,

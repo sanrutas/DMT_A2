@@ -249,7 +249,7 @@ def prepare_training_data():
     return train
 
 
-def train_validation_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
+def train_validation_model(resume=False, boost_rounds=POSITION_BOOST_ROUND):
     train, val = prepare_validation_data()
 
     init_model_path = VALIDATION_MODEL_PATH if resume else None
@@ -259,7 +259,7 @@ def train_validation_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
         print("Training validation position model...", flush=True)
     estimator = train_position_estimator(
         train,
-        num_boost_round=resume_rounds,
+        num_boost_round=boost_rounds,
         init_model_path=init_model_path,
     )
 
@@ -276,7 +276,7 @@ def train_validation_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
         OUTPUT_DIR / "validation_model_params.json",
         validation_rmse,
         resumed_from=init_model_path,
-        resume_rounds=resume_rounds if resume else None,
+        resume_rounds=boost_rounds if resume else None,
     )
 
     print(f"Validation position RMSE: {validation_rmse:.6f}", flush=True)
@@ -284,7 +284,7 @@ def train_validation_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
     return validation_rmse
 
 
-def train_test_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
+def train_test_model(resume=False, boost_rounds=POSITION_BOOST_ROUND):
     train = prepare_training_data()
 
     init_model_path = MODEL_PATH if resume else None
@@ -294,7 +294,7 @@ def train_test_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
         print("Training final position model...", flush=True)
     estimator = train_position_estimator(
         train,
-        num_boost_round=resume_rounds,
+        num_boost_round=boost_rounds,
         init_model_path=init_model_path,
     )
 
@@ -304,30 +304,36 @@ def train_test_model(resume=False, resume_rounds=POSITION_BOOST_ROUND):
         estimator,
         OUTPUT_DIR / "model_params.json",
         resumed_from=init_model_path,
-        resume_rounds=resume_rounds if resume else None,
+        resume_rounds=boost_rounds if resume else None,
     )
 
     print(f"Wrote final position model to {MODEL_PATH}", flush=True)
 
 
-def main(run="both", resume=False, resume_rounds=POSITION_BOOST_ROUND):
+def main(run="both", resume=False, boost_rounds=POSITION_BOOST_ROUND):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     if run in ["valid", "both"]:
-        train_validation_model(resume, resume_rounds)
+        train_validation_model(resume, boost_rounds)
 
     if run in ["test", "both"]:
-        train_test_model(resume, resume_rounds)
+        train_test_model(resume, boost_rounds)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", choices=["valid", "test", "both"], default="both")
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--resume-rounds", type=int, default=POSITION_BOOST_ROUND)
+    parser.add_argument(
+        "--boost-rounds",
+        "--resume-rounds",
+        dest="boost_rounds",
+        type=int,
+        default=POSITION_BOOST_ROUND,
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.run, args.resume, args.resume_rounds)
+    main(args.run, args.resume, args.boost_rounds)
